@@ -3,5 +3,5 @@ __recovery/
 Android/
 Android64/
 IOS/
-WIN32/
+Win32/
 *.identcache
