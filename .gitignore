@@ -1,0 +1,7 @@
+__history/
+__recovery/
+Android/
+Android64/
+IOS/
+WIN32/
+*.identcache

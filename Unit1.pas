@@ -6,12 +6,11 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, IdBaseComponent, IdComponent,
   IdTCPConnection, IdTCPClient, IdTCPServer, IdContext, Vcl.StdCtrls, Printers,
-  IdCustomTCPServer, ShellAPI, Vcl.ExtCtrls, Vcl.Menus;
+  IdCustomTCPServer, ShellAPI, Vcl.ExtCtrls, Vcl.Menus, system.IniFiles, IOUtils, system.DateUtils;
 
 type
   TForm1 = class(TForm)
     MemoLog: TMemo;
-    //TrayIcon1: TTrayIcon;
     IdTCPServer1: TIdTCPServer;
     TrayIcon1: TTrayIcon;
     PopupMenu1: TPopupMenu;
@@ -19,22 +18,22 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure IdTCPServer1Execute(AContext: TIdContext);
-    function FiltrarCaracteresASCII(const Texto: string): string;
     function ValoresNA(Valor : string) : boolean;
     procedure CerrarClick(Sender: TObject);
-    procedure ImprimirConSaltoDeLinea(const Texto: string);
 
     private
     procedure Log(const Msg: string);
-    procedure ImprimirEnImpresoraLocal(Datos: TStringList);
+    procedure ImprimirEnImpresoraLocal(Datos: TStringList; ImpresoraNombre: string);
     procedure WMTrayIcon(var Msg: TMessage); message WM_USER + 1;
-    Function CleanString(const s: string): string;
+    procedure CargandoArchivoIni();
+    procedure Addlog(Texto: string);
   public
     { Public declarations }
   end;
 
 var
   Form1: TForm1;
+  ImpresoraNombre : string;
 
 implementation
 
@@ -42,15 +41,16 @@ implementation
 
 procedure TForm1.FormCreate(Sender: TObject);
 begin
+  CargandoArchivoIni();
   IdTCPServer1.DefaultPort := 9100;
   IdTCPServer1.Active := True;
-  Log('Servidor en escucha en el puerto 9100');
+  Addlog('Servidor en escucha en el puerto 9100');
   form1.Hide;
 
   // Inicializar el ícono de la bandeja del sistema
   TrayIcon1.Visible := True;
   TrayIcon1.Icon := Application.Icon;
-  TrayIcon1.Hint := 'EmulatorPrint Jamensoft';
+  TrayIcon1.Hint := 'EmulatorPrint Conectado a: ' + ImpresoraNombre;
   TrayIcon1.PopupMenu := PopupMenu1;
 end;
 
@@ -89,10 +89,10 @@ begin
     end
     else
     begin
-      // Si la línea está vacía, imprimir y reiniciar los datos acumulados
+      // Si los datos no estan , imprimir y reiniciar los datos acumulados
       if Datos.Count > 0 then
       begin
-        ImprimirEnImpresoraLocal(Datos);
+        ImprimirEnImpresoraLocal(Datos, ImpresoraNombre);
         Datos.Clear;
       end;
     end;
@@ -100,18 +100,36 @@ begin
   until not AContext.Connection.Connected;
 
   // Imprimir las líneas acumuladas si hay alguna
-  if Datos.Count > 0 then ImprimirEnImpresoraLocal(Datos);
+  if Datos.Count > 0 then ImprimirEnImpresoraLocal(Datos, ImpresoraNombre);
 
-  // Registrar en el memo que se han recibido y enviado todos los datos
-  Log('Todos los datos recibidos y enviados a la impresora local.');
 end;
 
-procedure TForm1.ImprimirEnImpresoraLocal(Datos: TStringList);
+
+procedure TForm1.ImprimirEnImpresoraLocal(Datos: TStringList; ImpresoraNombre: string);
 var
-  I : integer;
+  I, indexPrinter : integer;
 begin
-  // Configurar la impresora local
-  Printer.Printers[0];
+
+  // Buscar la impresora por nombre
+  indexPrinter := -1;
+  for I := 0 to Printer.Printers.Count - 1 do
+  begin
+    if SameText(Printer.Printers[I], ImpresoraNombre) then
+    begin
+      indexPrinter := I;
+      Break;
+    end;
+  end;
+
+  // Si la impresora no se encuentra, mostrar un mensaje de error y salir
+  if indexPrinter = -1 then
+  begin
+    Addlog('No se encontró la impresora especificada: ' + ImpresoraNombre);
+    Exit;
+  end;
+
+  // Configurar la impresora seleccionada
+  Printer.PrinterIndex := indexPrinter;
 
   // Iniciar el trabajo de impresión
   Printer.BeginDoc;
@@ -123,26 +141,12 @@ begin
     Printer.Canvas.TextOut(10,(I + 1) * Printer.Canvas.TextHeight('X'), ' ');
     Printer.EndDoc;
   end;
+
+  Addlog('Todos los datos recibidos y enviados a la impresora local.');
+
 end;
 
-procedure TForm1.ImprimirConSaltoDeLinea(const Texto: string);
-var
-  Rect: TRect;
-begin
-  Printer.BeginDoc;
-  try
-    // Configurar el rectángulo de impresión
-    Rect.Left := 10;
-    Rect.Top := 10;
-    Rect.Right := Printer.PageWidth - 10;
-    Rect.Bottom := Printer.PageHeight - 10;
 
-    // Imprimir el texto con un salto de línea al final
-    //Printer.Canvas.TextRect(Rect, Texto + sLineBreak, [tfWordBreak]);
-  finally
-    Printer.EndDoc;
-  end;
-end;
 
 Function TForm1.valoresNA(Valor : string) : boolean;
 var
@@ -176,36 +180,6 @@ begin
   application.Terminate;
 end;
 
-function Tform1.CleanString(const s: string): string;
-var
-  i: Integer;
-begin
-  // Convertir la cadena a mayúsculas
-  Result := UpperCase(s);
-
-  // Eliminar caracteres no alfanuméricos y no deseados
-  for i := 1 to Length(Result) do
-  begin
-    if not (Result[i] in ['A'..'Z', '0'..'9']) then
-      Result[i] := ' ';
-  end;
-
-  // Eliminar espacios en blanco adicionales
-  Result := Trim(Result);
-end;
-
-function Tform1.FiltrarCaracteresASCII(const Texto: string): string;
-var
-  I: Integer;
-begin
-  Result := '';
-  for I := 1 to Length(Texto) do
-  begin
-    if Ord(Texto[I]) in [32..127] then
-      Result := Result + Texto[I];
-  end;
-end;
-
 procedure TForm1.WMTrayIcon(var Msg: TMessage);
 begin
   case Msg.LParam of
@@ -217,5 +191,71 @@ begin
       end;
   end;
 end;
+
+
+procedure TForm1.CargandoArchivoIni();
+var
+  ini : TIniFile;
+  LocalPath,texto : string;
+begin
+  localpath := Tpath.GetFullPath(Application.ClassName).Replace('TApplication','conf.ini');
+  Ini := Tinifile.Create(localpath);
+  try
+    ImpresoraNombre := Ini.ReadString('Impresion', 'NombreImpresora', '0');
+  finally
+    Ini.Free;
+  end;
+end;
+
+
+procedure TForm1.Addlog(Texto: string);
+var
+  LogFile, BackupFile: TextFile;
+  Text: string;
+  LogFilePath, BackupFilePath: string;
+  CurrentFileSizeKB: Integer;
+  MaxFileSizeKB: Integer;
+begin
+  MaxFileSizeKB := 30000; // Limitando tamaño del archivo a 30 MB
+  // Formateando Texto.
+  Text := '[' + Now.ToString + ']' + '***' + Texto + '***';
+
+  // Obtener la ruta completa del archivo de log
+  LogFilePath := System.IOUtils.TPath.Combine(System.IOUtils.TPath.GetAppPath , 'logPrintJamen.txt');
+
+  // Verificar y limitar el tamaño del archivo
+  CurrentFileSizeKB := 0;
+  if FileExists(LogFilePath) then CurrentFileSizeKB := Round(TFile.GetSize(LogFilePath) / 1024); // Convertir bytes a kilobytes
+
+  if (CurrentFileSizeKB + (Length(Text) / 1024)) > MaxFileSizeKB then
+  begin
+    // El archivo excederá el tamaño máximo, realizar backup y truncar el archivo original
+    BackupFilePath := System.IOUtils.TPath.Combine(System.IOUtils.TPath.GetAppPath, 'log-Npedidos1.txt');
+    TFile.Copy(LogFilePath, BackupFilePath, True);
+
+    // Truncar el archivo original
+    Rewrite(LogFile);
+
+    // Escribir el nuevo texto en el archivo original
+    Writeln(LogFile, Text);
+    CloseFile(LogFile);
+  end
+  else
+  begin
+    // Escribir Texto en el archivo original sin exceder el tamaño máximo
+    try
+      AssignFile(LogFile, LogFilePath);
+      if FileExists(LogFilePath) then
+        Append(LogFile)
+      else
+        Rewrite(LogFile);
+
+      Writeln(LogFile, Text);
+    finally
+      CloseFile(LogFile);
+    end;
+  end;
+end;
+
 
 end.
